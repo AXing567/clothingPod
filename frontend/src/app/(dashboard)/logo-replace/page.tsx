@@ -11,18 +11,38 @@ import { type Polygon } from "@/components/logo-replace/PolygonSelector";
 import { TaskList, type TaskItem } from "@/components/logo-replace/TaskList";
 import { PromptBatchInput } from "@/components/logo-replace/PromptInput";
 import { MaskSelectorDialog } from "@/components/logo-replace/MaskSelectorDialog";
-import {
-  uploadImage,
-  generateLogoReplace,
-  pollTaskUntilComplete,
-  getResultImageUrl,
-} from "@/lib/api/logo-replace";
+import { uploadImage, generateLogoReplace, pollTaskUntilComplete } from "@/lib/api/logo-replace";
 
 // 默认提示词
 const DEFAULT_PROMPT = `图1是产品原图，图2是用户圈选logo后的图片，图3是logo图片。
 我的目标是：
 - 按照用户圈选的位置，将原图中的logo替换为图3
 - 图3的大小不能大于原logo大小`;
+
+// 纵横比选项
+const ASPECT_RATIO_OPTIONS = [
+  { value: "1:1", label: "1:1 (正方形)" },
+  { value: "16:9", label: "16:9 (横向宽屏)" },
+  { value: "9:16", label: "9:16 (竖向长图)" },
+  { value: "4:3", label: "4:3 (横向标准)" },
+  { value: "3:4", label: "3:4 (竖向标准)" },
+];
+
+// 分辨率选项
+const IMAGE_SIZE_OPTIONS = [
+  { value: "1K", label: "1K" },
+  { value: "2K", label: "2K (推荐)" },
+  { value: "4K", label: "4K" },
+];
+
+// 分辨率对照表
+const RESOLUTION_TABLE: Record<string, Record<string, string>> = {
+  "1:1": { "1K": "1024×1024", "2K": "2048×2048", "4K": "4096×4096" },
+  "16:9": { "1K": "1376×768", "2K": "2752×1536", "4K": "5504×3072" },
+  "9:16": { "1K": "768×1376", "2K": "1536×2752", "4K": "3072×5504" },
+  "4:3": { "1K": "1200×896", "2K": "2400×1792", "4K": "4800×3584" },
+  "3:4": { "1K": "896×1200", "2K": "1792×2400", "4K": "3584×4800" },
+};
 
 export default function LogoReplacePage() {
   const session = useSession();
@@ -42,6 +62,10 @@ export default function LogoReplacePage() {
   // 提示词
   const [defaultPrompt, setDefaultPrompt] = useState(DEFAULT_PROMPT);
 
+  // 生成参数
+  const [aspectRatio, setAspectRatio] = useState("1:1");
+  const [imageSize, setImageSize] = useState("2K");
+
   // 任务列表
   const [tasks, setTasks] = useState<TaskItem[]>([]);
 
@@ -52,56 +76,67 @@ export default function LogoReplacePage() {
 
   // 生成任务列表（商品×Logo的笛卡尔积）
   useEffect(() => {
+    console.log("[useEffect] 任务列表更新触发", {
+      productImages: productImages.length,
+      logoImages: logoImages.length,
+      globalMaskData: globalMaskData ? `${globalMaskData.substring(0, 30)}...` : "empty",
+      individualMasks: Object.keys(individualMasks),
+    });
+
     if (productImages.length === 0 || logoImages.length === 0) {
       setTasks([]);
       return;
     }
 
-    const newTasks: TaskItem[] = [];
-    for (const product of productImages) {
-      for (const logo of logoImages) {
-        const existingTask = tasks.find(
-          (t) => t.productImage.id === product.id && t.logoImage.id === logo.id
-        );
+    // 使用函数式更新，确保获取最新的 tasks 状态
+    setTasks((prevTasks) => {
+      const newTasks: TaskItem[] = [];
+      for (const product of productImages) {
+        for (const logo of logoImages) {
+          const existingTask = prevTasks.find(
+            (t) => t.productImage.id === product.id && t.logoImage.id === logo.id
+          );
 
-        if (existingTask) {
-          // 保留现有任务状态，但更新图片引用（确保 uploaded 状态是最新的）
-          newTasks.push({
-            ...existingTask,
-            productImage: product,
-            logoImage: logo,
-          });
-        } else {
-          // 创建新任务
-          newTasks.push({
-            id: `${product.id}-${logo.id}`,
-            productImage: product,
-            logoImage: logo,
-            maskImage: individualMasks[product.id] || globalMaskData,
-            useGlobalMask: !individualMasks[product.id],
-            prompt: defaultPrompt,
-            status: "pending",
-            selected: true,
-          });
+          if (existingTask) {
+            // 保留现有任务状态，但更新图片引用和遮罩
+            // 如果使用全局遮罩，需要同步更新 maskImage
+            const updatedMaskImage = existingTask.useGlobalMask
+              ? globalMaskData
+              : individualMasks[product.id] || existingTask.maskImage;
+            console.log(`[useEffect] 更新任务 ${existingTask.id}:`, {
+              useGlobalMask: existingTask.useGlobalMask,
+              updatedMaskImage: updatedMaskImage ? "has value" : "empty",
+            });
+            newTasks.push({
+              ...existingTask,
+              productImage: product,
+              logoImage: logo,
+              maskImage: updatedMaskImage,
+            });
+          } else {
+            // 创建新任务
+            const newMaskImage = individualMasks[product.id] || globalMaskData;
+            console.log(`[useEffect] 创建新任务:`, {
+              productId: product.id,
+              logoId: logo.id,
+              maskImage: newMaskImage ? "has value" : "empty",
+            });
+            newTasks.push({
+              id: `${product.id}-${logo.id}`,
+              productImage: product,
+              logoImage: logo,
+              maskImage: newMaskImage,
+              useGlobalMask: !individualMasks[product.id],
+              prompt: defaultPrompt,
+              status: "pending",
+              selected: true,
+            });
+          }
         }
       }
-    }
-    setTasks(newTasks);
-  }, [productImages, logoImages]);
-
-  // 当全局遮罩更新时，更新使用全局遮罩的任务
-  useEffect(() => {
-    if (!globalMaskData) return;
-
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.useGlobalMask) {
-          return { ...task, maskImage: globalMaskData };
-        }
-        return task;
-      })
-    );
-  }, [globalMaskData]);
+      return newTasks;
+    });
+  }, [productImages, logoImages, globalMaskData, individualMasks, defaultPrompt]);
 
   // 上传处理
   const handleUploadProductImage = useCallback(async (file: File) => {
@@ -159,9 +194,33 @@ export default function LogoReplacePage() {
 
   // 保存圈选结果
   const handleSaveMask = (maskData: string, polygons: Polygon[]) => {
+    console.log("[handleSaveMask] 保存圈选 - maskData长度:", maskData?.length || 0);
+    console.log(
+      "[handleSaveMask] 保存圈选 - maskData前100字符:",
+      maskData ? maskData.substring(0, 100) : "EMPTY"
+    );
+    console.log("[handleSaveMask] 保存圈选 - mode:", maskDialogMode);
+    console.log("[handleSaveMask] 保存圈选 - 当前任务数:", tasks.length);
+
     if (maskDialogMode === "global") {
+      console.log("[handleSaveMask] 设置全局圈选数据, maskData有值:", !!maskData);
       setGlobalMaskData(maskData);
       setGlobalPolygons(polygons);
+
+      // 直接更新所有使用全局遮罩的任务
+      setTasks((prev) => {
+        console.log("[handleSaveMask] setTasks回调 - prev任务数:", prev.length);
+        const updated = prev.map((t) => {
+          if (t.useGlobalMask) {
+            console.log("[handleSaveMask] 更新任务:", t.id, "设置maskImage长度:", maskData?.length);
+            return { ...t, maskImage: maskData };
+          }
+          return t;
+        });
+        return updated;
+      });
+      console.log("[handleSaveMask] setTasks调用完成");
+
       toast.success("全局圈选已保存，将应用到所有商品图");
     } else if (currentEditingTaskId) {
       const task = tasks.find((t) => t.id === currentEditingTaskId);
@@ -272,8 +331,8 @@ export default function LogoReplacePage() {
           logo_image_id: task.logoImage.uploadedId!,
           mask_data: task.maskImage!,
           prompt: task.prompt,
-          aspect_ratio: "1:1",
-          image_size: "2K",
+          aspect_ratio: aspectRatio,
+          image_size: imageSize,
         });
 
         const result = await pollTaskUntilComplete(taskResponse.task_id);
@@ -472,6 +531,62 @@ export default function LogoReplacePage() {
         <PromptBatchInput defaultPrompt={defaultPrompt} onFillAll={fillAllPrompts} />
       </div>
 
+      {/* 生成参数设置 */}
+      <div className="rounded-lg bg-white p-4 shadow">
+        <h3 className="mb-4 text-lg font-medium">输出设置</h3>
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          {/* 纵横比选择 */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">纵横比</label>
+            <div className="flex flex-wrap gap-2">
+              {ASPECT_RATIO_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setAspectRatio(option.value)}
+                  className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    aspectRatio === option.value
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 分辨率选择 */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">分辨率</label>
+            <div className="flex flex-wrap gap-2">
+              {IMAGE_SIZE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setImageSize(option.value)}
+                  className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    imageSize === option.value
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 实际分辨率显示 */}
+        <div className="mt-4 rounded-lg bg-slate-50 p-3">
+          <p className="text-sm text-slate-600">
+            当前输出分辨率：
+            <span className="ml-2 font-medium text-slate-900">
+              {RESOLUTION_TABLE[aspectRatio]?.[imageSize] || "未知"}
+            </span>
+          </p>
+        </div>
+      </div>
+
       {/* 任务列表 */}
       {tasks.length > 0 && (
         <div className="rounded-lg bg-white p-4 shadow">
@@ -520,7 +635,6 @@ export default function LogoReplacePage() {
             onEditMask={openIndividualMaskDialog}
             onResetToGlobalMask={resetToGlobalMask}
             globalMaskData={globalMaskData}
-            getResultImageUrl={getResultImageUrl}
           />
         </div>
       )}

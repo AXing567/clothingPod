@@ -1,10 +1,15 @@
 import { apiClient, getAuthToken } from "./client";
+import type { components } from "./generated/schema";
 import { extractErrorMessage } from "./utils";
+
+// 类型别名
+type ItemPublic = components["schemas"]["ItemPublic"];
+type ItemsPublic = components["schemas"]["ItemsPublic"];
 
 /**
  * 获取项目列表
  */
-export async function getItems(skip: number = 0, limit: number = 10) {
+export async function getItems(skip: number = 0, limit: number = 10): Promise<ItemsPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -23,13 +28,13 @@ export async function getItems(skip: number = 0, limit: number = 10) {
     throw new Error(extractErrorMessage(error, "获取项目列表失败"));
   }
 
-  return data;
+  return data as ItemsPublic;
 }
 
 /**
  * 获取单个项目信息
  */
-export async function getItem(itemId: string) {
+export async function getItem(itemId: string): Promise<ItemPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -48,13 +53,13 @@ export async function getItem(itemId: string) {
     throw new Error(extractErrorMessage(error, "获取项目信息失败"));
   }
 
-  return data;
+  return data as ItemPublic;
 }
 
 /**
  * 创建项目
  */
-export async function createItem(title: string, description?: string) {
+export async function createItem(title: string, description?: string): Promise<ItemPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -74,7 +79,7 @@ export async function createItem(title: string, description?: string) {
     throw new Error(extractErrorMessage(error, "创建项目失败"));
   }
 
-  return data;
+  return data as ItemPublic;
 }
 
 /**
@@ -86,7 +91,7 @@ export async function updateItem(
     title?: string;
     description?: string;
   }
-) {
+): Promise<ItemPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -106,19 +111,19 @@ export async function updateItem(
     throw new Error(extractErrorMessage(error, "更新项目失败"));
   }
 
-  return data;
+  return data as ItemPublic;
 }
 
 /**
  * 删除项目
  */
-export async function deleteItem(itemId: string) {
+export async function deleteItem(itemId: string): Promise<void> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
   }
 
-  const { data, error } = await apiClient.DELETE("/api/v1/items/{id}", {
+  const { error } = await apiClient.DELETE("/api/v1/items/{id}", {
     params: {
       path: { id: itemId },
     },
@@ -130,6 +135,4 @@ export async function deleteItem(itemId: string) {
   if (error) {
     throw new Error(extractErrorMessage(error, "删除项目失败"));
   }
-
-  return data;
 }

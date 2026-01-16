@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   RefreshCw,
   Pencil,
@@ -11,10 +11,12 @@ import {
   Clock,
   Download,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import type { UploadedImage } from "./ImageUploader";
+import { fetchResultImageAsBlob, downloadResultImage } from "@/lib/api/logo-replace";
 
 export interface TaskItem {
   id: string;
@@ -37,7 +39,7 @@ interface TaskListProps {
   onEditMask: (taskId: string) => void;
   onResetToGlobalMask: (productImageId: string) => void;
   globalMaskData: string;
-  getResultImageUrl: (resultId: string) => string;
+  // getResultImageUrl 已移除，改用带认证的 fetchResultImageAsBlob
 }
 
 // 状态图标组件
@@ -68,24 +70,93 @@ function getStatusText(status: TaskItem["status"]): string {
   }
 }
 
-// 图片预览组件（悬停放大）
-function ImagePreview({ src, alt, className }: { src: string; alt: string; className?: string }) {
+// 将 base64 转换为 Blob URL（用于处理大型图片）
+function base64ToBlobUrl(base64: string, mimeType: string = "image/png"): string {
+  try {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: mimeType });
+    return URL.createObjectURL(blob);
+  } catch (e) {
+    console.error("[base64ToBlobUrl] 转换失败:", e);
+    return "";
+  }
+}
+
+// 图片预览组件（悬停放大）- 支持 base64 和普通 URL
+function ImagePreview({
+  src,
+  alt,
+  base64Data,
+}: {
+  src?: string;
+  alt: string;
+  base64Data?: string;
+}) {
   const [showLarge, setShowLarge] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  // 如果提供了 base64Data，转换为 Blob URL
+  useEffect(() => {
+    if (base64Data) {
+      const url = base64ToBlobUrl(base64Data);
+      if (url) {
+        setBlobUrl(url);
+      } else {
+        setLoadError(true);
+      }
+      return () => {
+        if (url) {
+          URL.revokeObjectURL(url);
+        }
+      };
+    }
+  }, [base64Data]);
+
+  const imageSrc = base64Data ? blobUrl : src;
+
+  if (!imageSrc) {
+    return (
+      <div
+        className="flex items-center justify-center rounded border bg-slate-100 text-xs text-slate-400"
+        style={{ width: 64, height: 64, minWidth: 64, minHeight: 64 }}
+      >
+        加载中...
+      </div>
+    );
+  }
 
   return (
-    <div className="relative">
+    <div className="relative" style={{ width: 64, height: 64, minWidth: 64, minHeight: 64 }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={src}
+        src={imageSrc}
         alt={alt}
-        className={className}
+        className="cursor-pointer rounded border object-cover"
+        style={{ width: 64, height: 64 }}
         onMouseEnter={() => setShowLarge(true)}
         onMouseLeave={() => setShowLarge(false)}
+        onLoad={() => setLoaded(true)}
+        onError={() => setLoadError(true)}
       />
-      {showLarge && (
+      {loadError && (
+        <div
+          className="absolute inset-0 flex items-center justify-center rounded bg-red-100 text-xs text-red-500"
+          style={{ width: 64, height: 64 }}
+        >
+          加载失败
+        </div>
+      )}
+      {showLarge && loaded && (
         <div className="absolute left-full top-0 z-50 ml-2 rounded-lg border bg-white p-2 shadow-xl">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={alt} className="h-48 w-48 object-contain" />
+          <img src={imageSrc} alt={alt} className="h-48 w-48 object-contain" />
         </div>
       )}
     </div>
@@ -101,7 +172,6 @@ function TaskRow({
   onEditMask,
   onResetToGlobalMask,
   globalMaskData,
-  getResultImageUrl,
 }: {
   task: TaskItem;
   onToggleSelect: (taskId: string) => void;
@@ -110,25 +180,73 @@ function TaskRow({
   onEditMask: (taskId: string) => void;
   onResetToGlobalMask: (productImageId: string) => void;
   globalMaskData: string;
-  getResultImageUrl: (resultId: string) => string;
 }) {
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [localPrompt, setLocalPrompt] = useState(task.prompt);
+  const [resultImageUrl, setResultImageUrl] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  // 当 resultId 变化时，获取带认证的图片
+  useEffect(() => {
+    if (!task.resultId) {
+      setResultImageUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+
+    let cancelled = false;
+    let currentBlobUrl: string | null = null;
+
+    const fetchImage = async () => {
+      try {
+        const blobUrl = await fetchResultImageAsBlob(task.resultId!);
+        if (!cancelled) {
+          currentBlobUrl = blobUrl;
+          setResultImageUrl(blobUrl);
+        } else {
+          // 如果已取消，立即释放获取到的 URL
+          URL.revokeObjectURL(blobUrl);
+        }
+      } catch (error) {
+        console.error("获取结果图片失败:", error);
+        if (!cancelled) {
+          setResultImageUrl(null);
+        }
+      }
+    };
+
+    fetchImage();
+
+    // 清理函数：释放 Blob URL
+    return () => {
+      cancelled = true;
+      if (currentBlobUrl) {
+        URL.revokeObjectURL(currentBlobUrl);
+      }
+    };
+  }, [task.resultId]);
 
   const handlePromptSave = useCallback(() => {
     onUpdatePrompt(task.id, localPrompt);
     setIsEditingPrompt(false);
   }, [task.id, localPrompt, onUpdatePrompt]);
 
-  const handleDownload = () => {
-    if (!task.resultId) return;
-    const url = getResultImageUrl(task.resultId);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `logo_replaced_${task.id}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownload = async () => {
+    if (!task.resultId || isDownloading) return;
+
+    setIsDownloading(true);
+    try {
+      await downloadResultImage(task.resultId, `logo_replaced_${task.id}.png`);
+      toast.success("图片下载成功");
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "下载失败";
+      toast.error(`下载失败: ${errorMsg}`);
+      console.error("下载图片失败:", error);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   return (
@@ -144,33 +262,24 @@ function TaskRow({
 
       {/* 商品图 */}
       <td className="p-3">
-        <ImagePreview
-          src={task.productImage.preview}
-          alt="商品图"
-          className="h-16 w-16 cursor-pointer rounded border object-cover"
-        />
+        <ImagePreview src={task.productImage.preview} alt="商品图" />
       </td>
 
       {/* Logo图 */}
       <td className="p-3">
-        <ImagePreview
-          src={task.logoImage.preview}
-          alt="Logo图"
-          className="h-16 w-16 cursor-pointer rounded border object-cover"
-        />
+        <ImagePreview src={task.logoImage.preview} alt="Logo图" />
       </td>
 
       {/* 圈选图 */}
       <td className="p-3">
         <div className="flex items-center gap-2">
           {task.maskImage ? (
-            <ImagePreview
-              src={`data:image/png;base64,${task.maskImage}`}
-              alt="圈选图"
-              className="h-16 w-16 cursor-pointer rounded border object-cover"
-            />
+            <ImagePreview base64Data={task.maskImage} alt={`圈选图-${task.id}`} />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded border text-xs text-slate-400">
+            <div
+              className="flex items-center justify-center rounded border text-xs text-slate-400"
+              style={{ width: 64, height: 64, minWidth: 64 }}
+            >
               未圈选
             </div>
           )}
@@ -264,14 +373,20 @@ function TaskRow({
 
       {/* 结果图 */}
       <td className="p-3">
-        {task.resultId ? (
-          <ImagePreview
-            src={getResultImageUrl(task.resultId)}
-            alt="结果图"
-            className="h-16 w-16 cursor-pointer rounded border object-cover"
-          />
+        {resultImageUrl ? (
+          <ImagePreview src={resultImageUrl} alt="结果图" />
+        ) : task.resultId ? (
+          <div
+            className="flex items-center justify-center rounded border"
+            style={{ width: 64, height: 64 }}
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+          </div>
         ) : (
-          <div className="flex h-16 w-16 items-center justify-center rounded border text-xs text-slate-400">
+          <div
+            className="flex items-center justify-center rounded border text-xs text-slate-400"
+            style={{ width: 64, height: 64 }}
+          >
             -
           </div>
         )}
@@ -291,8 +406,18 @@ function TaskRow({
             重试
           </Button>
           {task.resultId && (
-            <Button variant="ghost" size="sm" onClick={handleDownload} className="h-8">
-              <Download className="h-3 w-3" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="h-8"
+            >
+              {isDownloading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Download className="h-3 w-3" />
+              )}
             </Button>
           )}
         </div>
@@ -309,7 +434,6 @@ export function TaskList({
   onEditMask,
   onResetToGlobalMask,
   globalMaskData,
-  getResultImageUrl,
 }: TaskListProps) {
   if (tasks.length === 0) {
     return (
@@ -343,7 +467,6 @@ export function TaskList({
               onEditMask={onEditMask}
               onResetToGlobalMask={onResetToGlobalMask}
               globalMaskData={globalMaskData}
-              getResultImageUrl={getResultImageUrl}
             />
           ))}
         </tbody>

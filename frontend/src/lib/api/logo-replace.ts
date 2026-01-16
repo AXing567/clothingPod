@@ -165,10 +165,51 @@ export async function getTaskStatus(taskId: string): Promise<TaskResponse> {
 }
 
 /**
- * 获取结果图片URL
+ * 获取结果图片URL（内部使用）
  */
 export function getResultImageUrl(resultId: string): string {
   return `${API_BASE}/api/v1/logo-replace/results/${resultId}`;
+}
+
+/**
+ * 获取带认证的结果图片 Blob URL
+ */
+export async function fetchResultImageAsBlob(resultId: string): Promise<string> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("未登录");
+  }
+
+  const response = await fetch(getResultImageUrl(resultId), {
+    headers: {
+      Authorization: token,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || "获取图片失败");
+  }
+
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * 下载结果图片（带认证）
+ */
+export async function downloadResultImage(resultId: string, filename: string): Promise<void> {
+  const blobUrl = await fetchResultImageAsBlob(resultId);
+
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  // 释放 Blob URL
+  URL.revokeObjectURL(blobUrl);
 }
 
 /**

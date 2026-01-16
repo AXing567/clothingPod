@@ -1,5 +1,10 @@
 import { apiClient, getAuthToken } from "./client";
+import type { components } from "./generated/schema";
 import { extractErrorMessage } from "./utils";
+
+// 类型别名
+type UserPublic = components["schemas"]["UserPublic"];
+type UsersPublic = components["schemas"]["UsersPublic"];
 
 interface CreateUserRequest {
   email: string;
@@ -19,7 +24,7 @@ interface UpdateUserRequest {
 /**
  * 获取用户列表
  */
-export async function getUsers(skip: number = 0, limit: number = 10) {
+export async function getUsers(skip: number = 0, limit: number = 10): Promise<UsersPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -38,13 +43,13 @@ export async function getUsers(skip: number = 0, limit: number = 10) {
     throw new Error(extractErrorMessage(error, "获取用户列表失败"));
   }
 
-  return data;
+  return data as UsersPublic;
 }
 
 /**
  * 获取单个用户信息
  */
-export async function getUser(userId: string) {
+export async function getUser(userId: string): Promise<UserPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -63,13 +68,13 @@ export async function getUser(userId: string) {
     throw new Error(extractErrorMessage(error, "获取用户信息失败"));
   }
 
-  return data;
+  return data as UserPublic;
 }
 
 /**
  * 获取当前用户信息
  */
-export async function getCurrentUserInfo() {
+export async function getCurrentUserInfo(): Promise<UserPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -85,7 +90,7 @@ export async function getCurrentUserInfo() {
     throw new Error(extractErrorMessage(error, "获取当前用户信息失败"));
   }
 
-  return data;
+  return data as UserPublic;
 }
 
 /**
@@ -97,7 +102,7 @@ export async function createUser(
   fullName?: string,
   isActive?: boolean,
   isSuperuser?: boolean
-) {
+): Promise<UserPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -122,7 +127,7 @@ export async function createUser(
     throw new Error(extractErrorMessage(error, "创建用户失败"));
   }
 
-  return data;
+  return data as UserPublic;
 }
 
 /**
@@ -132,7 +137,7 @@ export async function updateCurrentUser(updates: {
   email?: string;
   full_name?: string;
   password?: string;
-}) {
+}): Promise<UserPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -149,13 +154,13 @@ export async function updateCurrentUser(updates: {
     throw new Error(extractErrorMessage(error, "更新用户信息失败"));
   }
 
-  return data;
+  return data as UserPublic;
 }
 
 /**
  * 更新指定用户信息（仅管理员）
  */
-export async function updateUser(userId: string, updates: UpdateUserRequest) {
+export async function updateUser(userId: string, updates: UpdateUserRequest): Promise<UserPublic> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
@@ -178,19 +183,19 @@ export async function updateUser(userId: string, updates: UpdateUserRequest) {
     throw new Error(extractErrorMessage(error, "更新用户信息失败"));
   }
 
-  return data;
+  return data as UserPublic;
 }
 
 /**
  * 删除当前用户账户
  */
-export async function deleteCurrentUser() {
+export async function deleteCurrentUser(): Promise<void> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
   }
 
-  const { data, error } = await apiClient.DELETE("/api/v1/users/me", {
+  const { error } = await apiClient.DELETE("/api/v1/users/me", {
     headers: {
       Authorization: token,
     },
@@ -199,20 +204,18 @@ export async function deleteCurrentUser() {
   if (error) {
     throw new Error(extractErrorMessage(error, "删除账户失败"));
   }
-
-  return data;
 }
 
 /**
  * 删除指定用户（仅管理员）
  */
-export async function deleteUser(userId: string) {
+export async function deleteUser(userId: string): Promise<void> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
   }
 
-  const { data, error } = await apiClient.DELETE("/api/v1/users/{user_id}", {
+  const { error } = await apiClient.DELETE("/api/v1/users/{user_id}", {
     params: {
       path: { user_id: userId },
     },
@@ -224,20 +227,21 @@ export async function deleteUser(userId: string) {
   if (error) {
     throw new Error(extractErrorMessage(error, "删除用户失败"));
   }
-
-  return data;
 }
 
 /**
  * 修改当前用户密码
  */
-export async function changePassword(updates: { current_password: string; new_password: string }) {
+export async function changePassword(updates: {
+  current_password: string;
+  new_password: string;
+}): Promise<void> {
   const token = await getAuthToken();
   if (!token) {
     throw new Error("未登录");
   }
 
-  const { data, error } = await apiClient.PATCH("/api/v1/users/me/password", {
+  const { error } = await apiClient.PATCH("/api/v1/users/me/password", {
     body: updates,
     headers: {
       Authorization: token,
@@ -247,6 +251,4 @@ export async function changePassword(updates: { current_password: string; new_pa
   if (error) {
     throw new Error(extractErrorMessage(error, "修改密码失败"));
   }
-
-  return data;
 }
