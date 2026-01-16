@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str
 
+    # Laozhang AI API 配置
+    LAOZHANG_API_KEY: str = ""
+    LAOZHANG_API_URL: str = "https://api.laozhang.ai/v1beta/models/gemini-3-pro-image-preview:generateContent"
+
+    # 图片上传配置
+    UPLOAD_DIR: str = "uploads"
+    MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB
+
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
             message = (

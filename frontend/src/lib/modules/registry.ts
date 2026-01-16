@@ -7,6 +7,7 @@ import type { ModuleConfig } from "./types";
 // ============================================
 import { dashboardModule } from "@/app/(dashboard)/dashboard/config";
 import { itemsModule } from "@/app/(dashboard)/items/config";
+import { logoReplaceModule } from "@/app/(dashboard)/logo-replace/config";
 import { settingsModule } from "@/app/(dashboard)/settings/config";
 import { usersModule } from "@/app/(dashboard)/users/config";
 // [NEW_MODULE_IMPORT] - 新模块在此行上方添加
@@ -19,6 +20,7 @@ import { usersModule } from "@/app/(dashboard)/users/config";
 const modules: ModuleConfig[] = [
   dashboardModule,
   itemsModule,
+  logoReplaceModule,
   settingsModule,
   usersModule,
   // [NEW_MODULE_REGISTER] - 新模块在此行上方添加
