@@ -89,12 +89,5 @@ export async function getAuthToken(): Promise<string | null> {
   const { getSession } = await import("next-auth/react");
   const session = await getSession();
 
-  console.log("[getAuthToken] Session状态:", {
-    hasSession: !!session,
-    hasUser: !!session?.user,
-    hasAccessToken: !!session?.accessToken,
-    userEmail: session?.user?.email,
-  });
-
   return session?.accessToken ? `Bearer ${session.accessToken}` : null;
 }

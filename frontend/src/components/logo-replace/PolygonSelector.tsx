@@ -24,11 +24,7 @@ interface PolygonSelectorProps {
 const POINT_RADIUS = 6;
 const POINT_HIT_RADIUS = 12;
 
-export function PolygonSelector({
-  imageUrl,
-  polygons,
-  onPolygonsChange,
-}: PolygonSelectorProps) {
+export function PolygonSelector({ imageUrl, polygons, onPolygonsChange }: PolygonSelectorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);

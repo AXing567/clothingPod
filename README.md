@@ -143,6 +143,9 @@ cd ..
 
 # 安装 pre-commit hooks
 python -m pre_commit install
+
+# 手动运行不提交
+pre-commit run --all-files
 ```
 
 4. **启动开发环境**

@@ -38,19 +38,13 @@ export interface TaskResponse {
  * 上传图片
  */
 export async function uploadImage(file: File): Promise<UploadResponse> {
-  console.log("[uploadImage] 开始上传:", file.name);
-
   const token = await getAuthToken();
-  console.log("[uploadImage] Token获取结果:", token ? "已获取" : "未获取");
-
   if (!token) {
     throw new Error("未登录，请刷新页面或重新登录");
   }
 
   const formData = new FormData();
   formData.append("file", file);
-
-  console.log("[uploadImage] 发送请求到:", `${API_BASE}/api/v1/logo-replace/upload`);
 
   try {
     const response = await fetch(`${API_BASE}/api/v1/logo-replace/upload`, {
@@ -61,12 +55,8 @@ export async function uploadImage(file: File): Promise<UploadResponse> {
       body: formData,
     });
 
-    console.log("[uploadImage] 响应状态:", response.status);
-
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("[uploadImage] 错误响应:", errorText);
-
       let errorDetail = "上传失败";
       try {
         const errorJson = JSON.parse(errorText);
@@ -77,12 +67,9 @@ export async function uploadImage(file: File): Promise<UploadResponse> {
       throw new Error(errorDetail);
     }
 
-    const result = await response.json();
-    console.log("[uploadImage] 上传成功:", result.id);
-    return result;
+    return response.json();
   } catch (error) {
     if (error instanceof TypeError && error.message.includes("fetch")) {
-      console.error("[uploadImage] 网络错误:", error);
       throw new Error("网络连接失败，请检查后端服务是否运行在 " + API_BASE);
     }
     throw error;
@@ -214,16 +201,17 @@ export async function downloadResultImage(resultId: string, filename: string): P
 
 /**
  * 轮询任务状态直到完成
+ * 轮询策略：前2分钟每30秒一次，后2分钟每10秒一次
  */
 export async function pollTaskUntilComplete(
   taskId: string,
-  onProgress?: (progress: number) => void,
-  intervalMs: number = 2000,
-  maxAttempts: number = 90 // 最多3分钟
+  onProgress?: (progress: number) => void
 ): Promise<TaskResponse> {
-  let attempts = 0;
+  const startTime = Date.now();
+  const phase1Duration = 2 * 60 * 1000; // 前2分钟
+  const totalDuration = 4 * 60 * 1000; // 总共4分钟
 
-  while (attempts < maxAttempts) {
+  while (Date.now() - startTime < totalDuration) {
     const status = await getTaskStatus(taskId);
 
     if (onProgress) {
@@ -234,8 +222,10 @@ export async function pollTaskUntilComplete(
       return status;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    attempts++;
+    // 前2分钟30秒一次，后2分钟10秒一次
+    const elapsed = Date.now() - startTime;
+    const interval = elapsed < phase1Duration ? 30000 : 10000;
+    await new Promise((resolve) => setTimeout(resolve, interval));
   }
 
   throw new Error("任务超时");
