@@ -1,6 +1,7 @@
 const nextEslintPlugin = require("@next/eslint-plugin-next");
 const tsPlugin = require("@typescript-eslint/eslint-plugin");
 const tsParser = require("@typescript-eslint/parser");
+const reactHooksPlugin = require("eslint-plugin-react-hooks");
 
 module.exports = [
   {
@@ -18,11 +19,13 @@ module.exports = [
     plugins: {
       "@next/next": nextEslintPlugin,
       "@typescript-eslint": tsPlugin,
+      "react-hooks": reactHooksPlugin,
     },
     rules: {
       ...nextEslintPlugin.configs.recommended.rules,
       ...nextEslintPlugin.configs["core-web-vitals"].rules,
       ...tsPlugin.configs.recommended.rules,
+      ...reactHooksPlugin.configs.recommended.rules,
       "@typescript-eslint/no-explicit-any": "error",
     },
   },

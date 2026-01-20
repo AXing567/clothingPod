@@ -4,6 +4,15 @@ import { useCallback, useState } from "react";
 import { Upload, X, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
+// 生成唯一 ID（兼容不支持 crypto.randomUUID 的环境）
+function generateId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // 回退方案：使用时间戳 + 随机数
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+}
+
 export interface UploadedImage {
   id: string;
   file: File;
@@ -59,7 +68,7 @@ export function ImageUploader({
         // 单文件模式，替换现有图片
         const file = validFiles[0];
         const newImage: UploadedImage = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           file,
           preview: URL.createObjectURL(file),
           uploaded: false,
@@ -88,7 +97,7 @@ export function ImageUploader({
       const filesToAdd = validFiles.slice(0, remainingSlots);
 
       const newImages: UploadedImage[] = filesToAdd.map((file) => ({
-        id: crypto.randomUUID(),
+        id: generateId(),
         file,
         preview: URL.createObjectURL(file),
         uploaded: false,

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   RefreshCw,
   Pencil,
@@ -15,6 +16,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { UploadedImage } from "./ImageUploader";
 import { fetchResultImageAsBlob, downloadResultImage } from "@/lib/api/logo-replace";
 
@@ -39,7 +41,6 @@ interface TaskListProps {
   onEditMask: (taskId: string) => void;
   onResetToGlobalMask: (productImageId: string) => void;
   globalMaskData: string;
-  // getResultImageUrl 已移除，改用带认证的 fetchResultImageAsBlob
 }
 
 // 状态图标组件
@@ -70,24 +71,35 @@ function getStatusText(status: TaskItem["status"]): string {
   }
 }
 
-// 将 base64 转换为 Blob URL（用于处理大型图片）
-function base64ToBlobUrl(base64: string, mimeType: string = "image/png"): string {
-  try {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+// 异步将 base64 转换为 Blob URL（使用 requestIdleCallback 避免主线程阻塞）
+function base64ToBlobUrlAsync(base64: string, mimeType: string = "image/png"): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const callback = () => {
+      try {
+        const byteCharacters = atob(base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        resolve(URL.createObjectURL(blob));
+      } catch (e) {
+        console.error("[base64ToBlobUrlAsync] 转换失败:", e);
+        reject(e);
+      }
+    };
+
+    // 使用 requestIdleCallback 进行异步转换，如果不支持则使用 setTimeout
+    if (typeof requestIdleCallback !== "undefined") {
+      requestIdleCallback(callback, { timeout: 2000 });
+    } else {
+      setTimeout(callback, 0);
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: mimeType });
-    return URL.createObjectURL(blob);
-  } catch (e) {
-    console.error("[base64ToBlobUrl] 转换失败:", e);
-    return "";
-  }
+  });
 }
 
-// 图片预览组件（悬停放大）- 支持 base64 和普通 URL
+// 图片预览组件（点击查看大图）- 支持 base64 和普通 URL
 function ImagePreview({
   src,
   alt,
@@ -97,29 +109,58 @@ function ImagePreview({
   alt: string;
   base64Data?: string;
 }) {
-  const [showLarge, setShowLarge] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [isConverting, setIsConverting] = useState(false);
 
-  // 如果提供了 base64Data，转换为 Blob URL
+  // 如果提供了 base64Data，异步转换为 Blob URL
   useEffect(() => {
     if (base64Data) {
-      const url = base64ToBlobUrl(base64Data);
-      if (url) {
-        setBlobUrl(url);
-      } else {
-        setLoadError(true);
-      }
+      setIsConverting(true);
+      setLoadError(false);
+
+      let cancelled = false;
+
+      base64ToBlobUrlAsync(base64Data)
+        .then((url) => {
+          if (!cancelled) {
+            setBlobUrl(url);
+            setIsConverting(false);
+          } else {
+            URL.revokeObjectURL(url);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLoadError(true);
+            setIsConverting(false);
+          }
+        });
+
       return () => {
-        if (url) {
-          URL.revokeObjectURL(url);
+        cancelled = true;
+        if (blobUrl) {
+          URL.revokeObjectURL(blobUrl);
         }
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base64Data]);
 
   const imageSrc = base64Data ? blobUrl : src;
+
+  if (isConverting || (!imageSrc && base64Data)) {
+    return (
+      <div
+        className="flex items-center justify-center rounded border bg-slate-100 text-xs text-slate-400"
+        style={{ width: 64, height: 64, minWidth: 64, minHeight: 64 }}
+      >
+        <Loader2 className="h-4 w-4 animate-spin" />
+      </div>
+    );
+  }
 
   if (!imageSrc) {
     return (
@@ -133,38 +174,47 @@ function ImagePreview({
   }
 
   return (
-    <div className="relative" style={{ width: 64, height: 64, minWidth: 64, minHeight: 64 }}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={imageSrc}
-        alt={alt}
-        className="cursor-pointer rounded border object-cover"
-        style={{ width: 64, height: 64 }}
-        onMouseEnter={() => setShowLarge(true)}
-        onMouseLeave={() => setShowLarge(false)}
-        onLoad={() => setLoaded(true)}
-        onError={() => setLoadError(true)}
-      />
-      {loadError && (
-        <div
-          className="absolute inset-0 flex items-center justify-center rounded bg-red-100 text-xs text-red-500"
+    <>
+      <div className="relative" style={{ width: 64, height: 64, minWidth: 64, minHeight: 64 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={imageSrc}
+          alt={alt}
+          className="cursor-pointer rounded border object-cover transition-opacity hover:opacity-80"
           style={{ width: 64, height: 64 }}
-        >
-          加载失败
-        </div>
-      )}
-      {showLarge && loaded && (
-        <div className="absolute left-full top-0 z-50 ml-2 rounded-lg border bg-white p-2 shadow-xl">
+          onClick={() => loaded && setShowModal(true)}
+          onLoad={() => setLoaded(true)}
+          onError={() => setLoadError(true)}
+        />
+        {loadError && (
+          <div
+            className="absolute inset-0 flex items-center justify-center rounded bg-red-100 text-xs text-red-500"
+            style={{ width: 64, height: 64 }}
+          >
+            加载失败
+          </div>
+        )}
+      </div>
+
+      {/* 大图查看模态框 */}
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="flex max-h-[90vh] max-w-[90vw] items-center justify-center border-none bg-transparent p-0 shadow-none">
+          <DialogTitle className="sr-only">{alt}</DialogTitle>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageSrc} alt={alt} className="h-48 w-48 object-contain" />
-        </div>
-      )}
-    </div>
+          <img
+            src={imageSrc}
+            alt={alt}
+            className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+            onClick={() => setShowModal(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
-// 单行任务组件
-function TaskRow({
+// 单行任务组件 - 用于虚拟滚动
+const TaskRow = ({
   task,
   onToggleSelect,
   onUpdatePrompt,
@@ -172,6 +222,7 @@ function TaskRow({
   onEditMask,
   onResetToGlobalMask,
   globalMaskData,
+  style,
 }: {
   task: TaskItem;
   onToggleSelect: (taskId: string) => void;
@@ -180,7 +231,8 @@ function TaskRow({
   onEditMask: (taskId: string) => void;
   onResetToGlobalMask: (productImageId: string) => void;
   globalMaskData: string;
-}) {
+  style?: React.CSSProperties;
+}) => {
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [localPrompt, setLocalPrompt] = useState(task.prompt);
   const [resultImageUrl, setResultImageUrl] = useState<string | null>(null);
@@ -206,7 +258,6 @@ function TaskRow({
           currentBlobUrl = blobUrl;
           setResultImageUrl(blobUrl);
         } else {
-          // 如果已取消，立即释放获取到的 URL
           URL.revokeObjectURL(blobUrl);
         }
       } catch (error) {
@@ -219,7 +270,6 @@ function TaskRow({
 
     fetchImage();
 
-    // 清理函数：释放 Blob URL
     return () => {
       cancelled = true;
       if (currentBlobUrl) {
@@ -250,28 +300,28 @@ function TaskRow({
   };
 
   return (
-    <tr className="border-b hover:bg-slate-50">
+    <div className="flex items-center border-b bg-white hover:bg-slate-50" style={style}>
       {/* 选择框 */}
-      <td className="p-3 text-center">
+      <div className="flex w-[60px] min-w-[60px] items-center justify-center p-3">
         <Checkbox
           checked={task.selected}
           onCheckedChange={() => onToggleSelect(task.id)}
           disabled={task.status === "generating"}
         />
-      </td>
+      </div>
 
       {/* 商品图 */}
-      <td className="p-3">
+      <div className="flex w-[88px] min-w-[88px] items-center p-3">
         <ImagePreview src={task.productImage.preview} alt="商品图" />
-      </td>
+      </div>
 
       {/* Logo图 */}
-      <td className="p-3">
+      <div className="flex w-[88px] min-w-[88px] items-center p-3">
         <ImagePreview src={task.logoImage.preview} alt="Logo图" />
-      </td>
+      </div>
 
       {/* 圈选图 */}
-      <td className="p-3">
+      <div className="flex w-[160px] min-w-[160px] items-center p-3">
         <div className="flex items-center gap-2">
           {task.maskImage ? (
             <ImagePreview base64Data={task.maskImage} alt={`圈选图-${task.id}`} />
@@ -306,12 +356,12 @@ function TaskRow({
             )}
           </div>
         </div>
-      </td>
+      </div>
 
       {/* 提示词 */}
-      <td className="max-w-xs p-3">
+      <div className="flex min-w-0 flex-[0.8] items-center p-3">
         {isEditingPrompt ? (
-          <div className="space-y-2">
+          <div className="w-full space-y-2">
             <Textarea
               value={localPrompt}
               onChange={(e) => setLocalPrompt(e.target.value)}
@@ -337,42 +387,44 @@ function TaskRow({
           </div>
         ) : (
           <div
-            className="line-clamp-3 cursor-pointer rounded p-1 text-xs text-slate-600 hover:bg-slate-100"
+            className="line-clamp-3 w-full cursor-pointer rounded p-1 text-xs text-slate-600 hover:bg-slate-100"
             onClick={() => setIsEditingPrompt(true)}
             title="点击编辑提示词"
           >
             {task.prompt || "点击添加提示词"}
           </div>
         )}
-      </td>
+      </div>
 
       {/* 状态 */}
-      <td className="p-3">
-        <div className="flex items-center gap-2">
-          <StatusIcon status={task.status} />
-          <span
-            className={`text-sm ${
-              task.status === "success"
-                ? "text-green-600"
-                : task.status === "failed"
-                  ? "text-red-600"
-                  : task.status === "generating"
-                    ? "text-blue-600"
-                    : "text-slate-500"
-            }`}
-          >
-            {getStatusText(task.status)}
-          </span>
+      <div className="flex w-[100px] min-w-[100px] items-center p-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <StatusIcon status={task.status} />
+            <span
+              className={`text-sm ${
+                task.status === "success"
+                  ? "text-green-600"
+                  : task.status === "failed"
+                    ? "text-red-600"
+                    : task.status === "generating"
+                      ? "text-blue-600"
+                      : "text-slate-500"
+              }`}
+            >
+              {getStatusText(task.status)}
+            </span>
+          </div>
+          {task.error && (
+            <p className="mt-1 text-xs text-red-500" title={task.error}>
+              {task.error.slice(0, 30)}...
+            </p>
+          )}
         </div>
-        {task.error && (
-          <p className="mt-1 text-xs text-red-500" title={task.error}>
-            {task.error.slice(0, 30)}...
-          </p>
-        )}
-      </td>
+      </div>
 
       {/* 结果图 */}
-      <td className="p-3">
+      <div className="flex w-[88px] min-w-[88px] items-center p-3">
         {resultImageUrl ? (
           <ImagePreview src={resultImageUrl} alt="结果图" />
         ) : task.resultId ? (
@@ -390,10 +442,10 @@ function TaskRow({
             -
           </div>
         )}
-      </td>
+      </div>
 
       {/* 操作 */}
-      <td className="p-3">
+      <div className="flex w-[120px] min-w-[120px] items-center p-3">
         <div className="flex gap-1">
           <Button
             variant="outline"
@@ -421,8 +473,24 @@ function TaskRow({
             </Button>
           )}
         </div>
-      </td>
-    </tr>
+      </div>
+    </div>
+  );
+};
+
+// 表头组件
+function TableHeader() {
+  return (
+    <div className="flex items-center bg-slate-100 text-left text-sm font-medium">
+      <div className="w-[60px] min-w-[60px] p-3 text-center">选择</div>
+      <div className="w-[88px] min-w-[88px] p-3">商品图</div>
+      <div className="w-[88px] min-w-[88px] p-3">Logo图</div>
+      <div className="w-[160px] min-w-[160px] p-3">圈选图</div>
+      <div className="min-w-0 flex-[0.8] p-3">提示词</div>
+      <div className="w-[100px] min-w-[100px] p-3">状态</div>
+      <div className="w-[88px] min-w-[88px] p-3">结果图</div>
+      <div className="w-[120px] min-w-[120px] p-3">操作</div>
+    </div>
   );
 }
 
@@ -435,6 +503,30 @@ export function TaskList({
   onResetToGlobalMask,
   globalMaskData,
 }: TaskListProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // 虚拟滚动配置
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 100, // 每行预估高度 100px
+    overscan: 5, // 额外渲染 5 行用于平滑滚动
+  });
+
+  // 缓存 props，避免 TaskRow 不必要的重渲染
+  const taskRowProps = useMemo(
+    () => ({
+      onToggleSelect,
+      onUpdatePrompt,
+      onRetry,
+      onEditMask,
+      onResetToGlobalMask,
+      globalMaskData,
+    }),
+    [onToggleSelect, onUpdatePrompt, onRetry, onEditMask, onResetToGlobalMask, globalMaskData]
+  );
+
   if (tasks.length === 0) {
     return (
       <div className="py-8 text-center text-slate-500">上传商品图和Logo图后将自动生成任务列表</div>
@@ -442,35 +534,43 @@ export function TaskList({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="bg-slate-100 text-left text-sm">
-            <th className="w-12 p-3 text-center">选择</th>
-            <th className="w-20 p-3">商品图</th>
-            <th className="w-20 p-3">Logo图</th>
-            <th className="w-32 p-3">圈选图</th>
-            <th className="p-3">提示词</th>
-            <th className="w-24 p-3">状态</th>
-            <th className="w-20 p-3">结果图</th>
-            <th className="w-28 p-3">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tasks.map((task) => (
-            <TaskRow
-              key={task.id}
-              task={task}
-              onToggleSelect={onToggleSelect}
-              onUpdatePrompt={onUpdatePrompt}
-              onRetry={onRetry}
-              onEditMask={onEditMask}
-              onResetToGlobalMask={onResetToGlobalMask}
-              globalMaskData={globalMaskData}
-            />
-          ))}
-        </tbody>
-      </table>
+    <div className="overflow-hidden rounded border">
+      {/* 固定表头 */}
+      <TableHeader />
+
+      {/* 虚拟滚动容器 */}
+      <div
+        ref={parentRef}
+        className="overflow-auto"
+        style={{ height: Math.min(600, tasks.length * 100) }}
+      >
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const task = tasks[virtualRow.index];
+            return (
+              <TaskRow
+                key={task.id}
+                task={task}
+                {...taskRowProps}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

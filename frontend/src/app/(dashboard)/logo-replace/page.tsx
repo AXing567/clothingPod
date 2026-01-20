@@ -3,7 +3,17 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
-import { RotateCcw, Play, RefreshCw, CheckSquare, Square, Pencil } from "lucide-react";
+import {
+  RotateCcw,
+  Play,
+  RefreshCw,
+  CheckSquare,
+  Square,
+  Pencil,
+  Download,
+  Loader2,
+  Shuffle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ImageUploader, type UploadedImage } from "@/components/logo-replace/ImageUploader";
@@ -11,16 +21,23 @@ import { type Polygon } from "@/components/logo-replace/PolygonSelector";
 import { TaskList, type TaskItem } from "@/components/logo-replace/TaskList";
 import { PromptBatchInput } from "@/components/logo-replace/PromptInput";
 import { MaskSelectorDialog } from "@/components/logo-replace/MaskSelectorDialog";
-import { uploadImage, generateLogoReplace, pollTaskUntilComplete } from "@/lib/api/logo-replace";
+import {
+  uploadImage,
+  generateLogoReplace,
+  pollTaskUntilComplete,
+  fetchResultImageAsBlob,
+} from "@/lib/api/logo-replace";
 
 // 默认提示词
-const DEFAULT_PROMPT = `图1是产品原图，图2是用户圈选logo后的图片，图3是logo图片。
+const DEFAULT_PROMPT = `图1是产品原图，图2是logo图片，图3是用户圈选logo后的图片。
 我的目标是：
-- 按照用户圈选的位置，将原图中的logo替换为图3
-- 图3的大小不能大于原logo大小`;
+- 按照用户圈选的位置，将原图中的logo替换为图2
+- 图2的大小不能大于原logo大小
+- 按照圈选的修改，未圈选的不修改`;
 
 // 纵横比选项
 const ASPECT_RATIO_OPTIONS = [
+  { value: "", label: "不指定 (使用默认)" },
   { value: "1:1", label: "1:1 (正方形)" },
   { value: "16:9", label: "16:9 (横向宽屏)" },
   { value: "9:16", label: "9:16 (竖向长图)" },
@@ -30,6 +47,7 @@ const ASPECT_RATIO_OPTIONS = [
 
 // 分辨率选项
 const IMAGE_SIZE_OPTIONS = [
+  { value: "", label: "不指定 (使用默认)" },
   { value: "1K", label: "1K" },
   { value: "2K", label: "2K (推荐)" },
   { value: "4K", label: "4K" },
@@ -63,11 +81,14 @@ export default function LogoReplacePage() {
   const [defaultPrompt, setDefaultPrompt] = useState(DEFAULT_PROMPT);
 
   // 生成参数
-  const [aspectRatio, setAspectRatio] = useState("1:1");
-  const [imageSize, setImageSize] = useState("2K");
+  const [aspectRatio, setAspectRatio] = useState("");
+  const [imageSize, setImageSize] = useState("");
 
   // 任务列表
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+
+  // 下载状态
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
 
   // 弹窗状态
   const [maskDialogOpen, setMaskDialogOpen] = useState(false);
@@ -75,59 +96,51 @@ export default function LogoReplacePage() {
   const [currentEditingTaskId, setCurrentEditingTaskId] = useState<string | null>(null);
 
   // 生成任务列表（商品×Logo的笛卡尔积）
+  // 只在 productImages 或 logoImages 变化时触发任务创建/移除
+  // maskImage 的更新由 handleSaveMask 或专门的 effect 处理
   useEffect(() => {
-    console.log("[useEffect] 任务列表更新触发", {
-      productImages: productImages.length,
-      logoImages: logoImages.length,
-      globalMaskData: globalMaskData ? `${globalMaskData.substring(0, 30)}...` : "empty",
-      individualMasks: Object.keys(individualMasks),
-    });
-
     if (productImages.length === 0 || logoImages.length === 0) {
       setTasks([]);
       return;
     }
 
-    // 使用函数式更新，确保获取最新的 tasks 状态
+    // 获取当前的遮罩数据（在 setTasks 外部）
+    const currentGlobalMask = globalMaskData;
+    const currentIndividualMasks = individualMasks;
+    const currentDefaultPrompt = defaultPrompt;
+
     setTasks((prevTasks) => {
+      // 构建 prevTasks 的 Map 用于 O(1) 查询
+      const prevTaskMap = new Map<string, TaskItem>();
+      prevTasks.forEach((t) => prevTaskMap.set(`${t.productImage.id}-${t.logoImage.id}`, t));
+
       const newTasks: TaskItem[] = [];
       for (const product of productImages) {
         for (const logo of logoImages) {
-          const existingTask = prevTasks.find(
-            (t) => t.productImage.id === product.id && t.logoImage.id === logo.id
-          );
+          const taskKey = `${product.id}-${logo.id}`;
+          const existingTask = prevTaskMap.get(taskKey);
 
           if (existingTask) {
-            // 保留现有任务状态，但更新图片引用和遮罩
-            // 如果使用全局遮罩，需要同步更新 maskImage
-            const updatedMaskImage = existingTask.useGlobalMask
-              ? globalMaskData
-              : individualMasks[product.id] || existingTask.maskImage;
-            console.log(`[useEffect] 更新任务 ${existingTask.id}:`, {
-              useGlobalMask: existingTask.useGlobalMask,
-              updatedMaskImage: updatedMaskImage ? "has value" : "empty",
-            });
+            // 保留现有任务的所有状态（包括 maskImage）
             newTasks.push({
               ...existingTask,
               productImage: product,
               logoImage: logo,
-              maskImage: updatedMaskImage,
             });
           } else {
-            // 创建新任务
-            const newMaskImage = individualMasks[product.id] || globalMaskData;
-            console.log(`[useEffect] 创建新任务:`, {
-              productId: product.id,
-              logoId: logo.id,
-              maskImage: newMaskImage ? "has value" : "empty",
-            });
+            // 创建新任务：使用已有的遮罩数据
+            const hasIndividualMask = !!currentIndividualMasks[product.id];
+            const initialMask = hasIndividualMask
+              ? currentIndividualMasks[product.id]
+              : currentGlobalMask;
+
             newTasks.push({
-              id: `${product.id}-${logo.id}`,
+              id: taskKey,
               productImage: product,
               logoImage: logo,
-              maskImage: newMaskImage,
-              useGlobalMask: !individualMasks[product.id],
-              prompt: defaultPrompt,
+              maskImage: initialMask,
+              useGlobalMask: !hasIndividualMask,
+              prompt: currentDefaultPrompt,
               status: "pending",
               selected: true,
             });
@@ -136,7 +149,9 @@ export default function LogoReplacePage() {
       }
       return newTasks;
     });
-  }, [productImages, logoImages, globalMaskData, individualMasks, defaultPrompt]);
+    // 注意：只依赖 productImages 和 logoImages，避免 globalMaskData/individualMasks 变化触发重建
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productImages, logoImages]);
 
   // 上传处理
   const handleUploadProductImage = useCallback(async (file: File) => {
@@ -155,6 +170,11 @@ export default function LogoReplacePage() {
 
   const toggleSelectAll = () => {
     setTasks((prev) => prev.map((task) => ({ ...task, selected: !allSelected })));
+  };
+
+  // 反选
+  const toggleInvertSelection = () => {
+    setTasks((prev) => prev.map((task) => ({ ...task, selected: !task.selected })));
   };
 
   const toggleTaskSelection = (taskId: string) => {
@@ -194,56 +214,44 @@ export default function LogoReplacePage() {
 
   // 保存圈选结果
   const handleSaveMask = (maskData: string, polygons: Polygon[]) => {
-    console.log("[handleSaveMask] 保存圈选 - maskData长度:", maskData?.length || 0);
-    console.log(
-      "[handleSaveMask] 保存圈选 - maskData前100字符:",
-      maskData ? maskData.substring(0, 100) : "EMPTY"
-    );
-    console.log("[handleSaveMask] 保存圈选 - mode:", maskDialogMode);
-    console.log("[handleSaveMask] 保存圈选 - 当前任务数:", tasks.length);
-
     if (maskDialogMode === "global") {
-      console.log("[handleSaveMask] 设置全局圈选数据, maskData有值:", !!maskData);
       setGlobalMaskData(maskData);
       setGlobalPolygons(polygons);
 
       // 直接更新所有使用全局遮罩的任务
-      setTasks((prev) => {
-        console.log("[handleSaveMask] setTasks回调 - prev任务数:", prev.length);
-        const updated = prev.map((t) => {
-          if (t.useGlobalMask) {
-            console.log("[handleSaveMask] 更新任务:", t.id, "设置maskImage长度:", maskData?.length);
-            return { ...t, maskImage: maskData };
-          }
-          return t;
-        });
-        return updated;
-      });
-      console.log("[handleSaveMask] setTasks调用完成");
+      setTasks((prev) => prev.map((t) => (t.useGlobalMask ? { ...t, maskImage: maskData } : t)));
 
       toast.success("全局圈选已保存，将应用到所有商品图");
     } else if (currentEditingTaskId) {
+      // 先从当前 tasks 获取目标商品图ID
       const task = tasks.find((t) => t.id === currentEditingTaskId);
-      if (task) {
-        setIndividualMasks((prev) => ({
-          ...prev,
-          [task.productImage.id]: maskData,
-        }));
-        setIndividualPolygons((prev) => ({
-          ...prev,
-          [task.productImage.id]: polygons,
-        }));
-
-        // 更新所有使用该商品图的任务
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.productImage.id === task.productImage.id
-              ? { ...t, maskImage: maskData, useGlobalMask: false }
-              : t
-          )
-        );
-        toast.success("单独圈选已保存");
+      if (!task) {
+        setMaskDialogOpen(false);
+        return;
       }
+
+      const targetProductId = task.productImage.id;
+
+      // 先更新 individualMasks 和 individualPolygons
+      setIndividualMasks((prevMasks) => ({
+        ...prevMasks,
+        [targetProductId]: maskData,
+      }));
+      setIndividualPolygons((prevPolygons) => ({
+        ...prevPolygons,
+        [targetProductId]: polygons,
+      }));
+
+      // 然后更新任务列表 - 只更新使用该商品图的任务
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.productImage.id === targetProductId
+            ? { ...t, maskImage: maskData, useGlobalMask: false }
+            : t
+        )
+      );
+
+      toast.success("单独圈选已保存");
     }
     setMaskDialogOpen(false);
   };
@@ -321,7 +329,7 @@ export default function LogoReplacePage() {
     );
 
     // 并发生成（限制并发数）
-    const concurrency = 3;
+    const concurrency = 100;
     const taskQueue = [...tasksToGenerate];
 
     const processTask = async (task: TaskItem) => {
@@ -331,8 +339,8 @@ export default function LogoReplacePage() {
           logo_image_id: task.logoImage.uploadedId!,
           mask_data: task.maskImage!,
           prompt: task.prompt,
-          aspect_ratio: aspectRatio,
-          image_size: imageSize,
+          ...(aspectRatio && { aspect_ratio: aspectRatio }),
+          ...(imageSize && { image_size: imageSize }),
         });
 
         const result = await pollTaskUntilComplete(taskResponse.task_id);
@@ -410,6 +418,57 @@ export default function LogoReplacePage() {
     setTasks([]);
     setDefaultPrompt(DEFAULT_PROMPT);
     toast.success("已重置");
+  };
+
+  // 下载所有成功的结果图
+  const handleDownloadAll = async () => {
+    const successTasks = tasks.filter((t) => t.status === "success" && t.resultId);
+
+    if (successTasks.length === 0) {
+      toast.error("没有可下载的结果图");
+      return;
+    }
+
+    setIsDownloadingAll(true);
+
+    try {
+      const JSZip = (await import("jszip")).default;
+      const { saveAs } = await import("file-saver");
+      const zip = new JSZip();
+
+      // 并发获取所有图片
+      const downloadPromises = successTasks.map(async (task, index) => {
+        try {
+          const blobUrl = await fetchResultImageAsBlob(task.resultId!);
+          const response = await fetch(blobUrl);
+          const blob = await response.blob();
+          URL.revokeObjectURL(blobUrl);
+
+          // 文件名：序号_商品图名_Logo图名.png
+          const productName = task.productImage.file.name.replace(/\.[^/.]+$/, "");
+          const logoName = task.logoImage.file.name.replace(/\.[^/.]+$/, "");
+          const filename = `${String(index + 1).padStart(3, "0")}_${productName}_${logoName}.png`;
+
+          zip.file(filename, blob);
+        } catch (error) {
+          console.error(`下载任务 ${task.id} 失败:`, error);
+        }
+      });
+
+      await Promise.all(downloadPromises);
+
+      // 生成并下载 ZIP
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const timestamp = new Date().toISOString().slice(0, 10);
+      saveAs(zipBlob, `logo_results_${timestamp}.zip`);
+
+      toast.success(`已下载 ${successTasks.length} 张结果图`);
+    } catch (error) {
+      toast.error("下载失败，请重试");
+      console.error("批量下载失败:", error);
+    } finally {
+      setIsDownloadingAll(false);
+    }
   };
 
   // 获取当前编辑任务的商品图
@@ -581,7 +640,9 @@ export default function LogoReplacePage() {
           <p className="text-sm text-slate-600">
             当前输出分辨率：
             <span className="ml-2 font-medium text-slate-900">
-              {RESOLUTION_TABLE[aspectRatio]?.[imageSize] || "未知"}
+              {aspectRatio && imageSize
+                ? RESOLUTION_TABLE[aspectRatio]?.[imageSize] || "未知"
+                : "使用 API 默认值"}
             </span>
           </p>
         </div>
@@ -609,6 +670,10 @@ export default function LogoReplacePage() {
                 )}
                 {allSelected ? "取消全选" : "全选"}
               </Button>
+              <Button variant="outline" size="sm" onClick={toggleInvertSelection}>
+                <Shuffle className="mr-1 h-4 w-4" />
+                反选
+              </Button>
               <Button
                 onClick={handleGenerateSelected}
                 disabled={!someSelected || stats.generating > 0}
@@ -623,6 +688,23 @@ export default function LogoReplacePage() {
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 重新生成选中
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleDownloadAll}
+                disabled={stats.success === 0 || isDownloadingAll}
+              >
+                {isDownloadingAll ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    打包中...
+                  </>
+                ) : (
+                  <>
+                    <Download className="mr-2 h-4 w-4" />
+                    下载全部 ({stats.success})
+                  </>
+                )}
               </Button>
             </div>
           </div>
@@ -639,9 +721,10 @@ export default function LogoReplacePage() {
         </div>
       )}
 
-      {/* 圈选弹窗 */}
+      {/* 圈选弹窗 - 使用 key 强制重新挂载以正确初始化状态 */}
       {maskDialogOpen && currentEditingProduct && (
         <MaskSelectorDialog
+          key={`${maskDialogMode}-${currentEditingTaskId || "global"}`}
           open={maskDialogOpen}
           onClose={() => setMaskDialogOpen(false)}
           imageUrl={currentEditingProduct.preview}

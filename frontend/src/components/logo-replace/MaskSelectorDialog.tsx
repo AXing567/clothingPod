@@ -30,7 +30,10 @@ export function MaskSelectorDialog({
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
-  const [polygons, setPolygons] = useState<Polygon[]>([]);
+  // 使用 key 机制重新挂载组件，因此可以直接用 props 初始化状态
+  const [polygons, setPolygons] = useState<Polygon[]>(() =>
+    initialPolygons.length > 0 ? [...initialPolygons] : []
+  );
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [scale, setScale] = useState(1);
   const [activePolygonId, setActivePolygonId] = useState<string | null>(null);
@@ -42,14 +45,6 @@ export function MaskSelectorDialog({
     polygonId: string;
     pointIndex: number;
   } | null>(null);
-
-  // 初始化多边形
-  useEffect(() => {
-    if (open) {
-      setPolygons(initialPolygons.length > 0 ? [...initialPolygons] : []);
-      setActivePolygonId(null);
-    }
-  }, [open, initialPolygons]);
 
   // 加载图片
   useEffect(() => {

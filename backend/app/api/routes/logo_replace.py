@@ -44,8 +44,8 @@ class GenerateRequest(BaseModel):
     logo_image_id: str
     mask_data: str  # Base64编码的遮罩图
     prompt: str | None = None  # 自定义提示词
-    aspect_ratio: str = "1:1"
-    image_size: str = "2K"
+    aspect_ratio: str | None = None  # 不指定则使用 API 默认值
+    image_size: str | None = None  # 不指定则使用 API 默认值
 
 
 class BatchGenerateRequest(BaseModel):
@@ -233,8 +233,8 @@ async def _execute_generate_task(
     logo_path: Path,
     mask_data: str,
     prompt: str | None,
-    aspect_ratio: str,
-    image_size: str,
+    aspect_ratio: str | None,
+    image_size: str | None,
 ) -> None:
     """执行单个生成任务"""
     import base64

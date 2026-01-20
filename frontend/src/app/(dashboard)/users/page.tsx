@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -50,13 +50,7 @@ export default function UsersPage() {
     }
   }, [session?.status, isSuperuser, router]);
 
-  useEffect(() => {
-    if (session?.status === "authenticated") {
-      loadUsers();
-    }
-  }, [session?.status, page]);
-
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       setIsLoading(true);
       const response = await getUsers(page * pageSize, pageSize);
@@ -67,7 +61,13 @@ export default function UsersPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [page, pageSize]);
+
+  useEffect(() => {
+    if (session?.status === "authenticated") {
+      loadUsers();
+    }
+  }, [session?.status, loadUsers]);
 
   const handleDelete = async (userId: string, userEmail: string) => {
     try {
