@@ -37,7 +37,7 @@
     "clsx": "^2.1.1",
     "file-saver": "^2.0.5",
     "jszip": "^3.10.1",
-    "lucide-react": "^0.408.0",
+    "lucide-react": "^0.562.0",
     "next": "^15.5.7",
     "next-auth": "^5.0.0-beta.30",
     "openapi-fetch": "^0.11.0",
