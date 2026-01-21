@@ -79,6 +79,8 @@ services:
   backend:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     restart: always
+    ports:
+      - "8000:8000"
     networks:
       - traefik-public
       - default

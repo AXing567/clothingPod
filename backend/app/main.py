@@ -22,7 +22,16 @@ app = FastAPI(
 )
 
 # Set all CORS enabled origins
-if settings.all_cors_origins:
+# 在开发环境允许所有来源，生产环境使用配置的来源
+if settings.ENVIRONMENT == "local":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+elif settings.all_cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.all_cors_origins,
