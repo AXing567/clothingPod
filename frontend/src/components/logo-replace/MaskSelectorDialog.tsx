@@ -5,6 +5,8 @@ import { Check, Trash2, Undo } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Polygon, Point } from "./PolygonSelector";
+import { generateId } from "@/lib/utils";
+import { POINT_RADIUS, POINT_HIT_RADIUS } from "./constants";
 
 interface MaskSelectorDialogProps {
   open: boolean;
@@ -14,9 +16,6 @@ interface MaskSelectorDialogProps {
   onSave: (maskData: string, polygons: Polygon[]) => void;
   title?: string;
 }
-
-const POINT_RADIUS = 6;
-const POINT_HIT_RADIUS = 12;
 
 export function MaskSelectorDialog({
   open,
@@ -185,7 +184,7 @@ export function MaskSelectorDialog({
 
       if (!activePolygon || activePolygon.closed) {
         const newPolygon: Polygon = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           points: [pos],
           closed: false,
         };

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Trash2, Undo, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { generateId } from "@/lib/utils";
+import { POINT_RADIUS, POINT_HIT_RADIUS } from "./constants";
 
 export interface Point {
   x: number;
@@ -20,9 +22,6 @@ interface PolygonSelectorProps {
   polygons: Polygon[];
   onPolygonsChange: (polygons: Polygon[]) => void;
 }
-
-const POINT_RADIUS = 6;
-const POINT_HIT_RADIUS = 12;
 
 export function PolygonSelector({ imageUrl, polygons, onPolygonsChange }: PolygonSelectorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -189,7 +188,7 @@ export function PolygonSelector({ imageUrl, polygons, onPolygonsChange }: Polygo
       if (!activePolygon || activePolygon.closed) {
         // 创建新多边形
         const newPolygon: Polygon = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           points: [pos],
           closed: false,
         };
